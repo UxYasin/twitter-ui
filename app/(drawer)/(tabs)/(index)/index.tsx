@@ -1,251 +1,212 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
     View,
-    Text,
     StyleSheet,
     Dimensions,
     FlatList,
-    TouchableOpacity,
+    Text,
+    ViewToken,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { FeedItem, FeedContent, findUserById } from '~/components/FeedItem';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Tabs, MaterialTabBar } from 'react-native-collapsible-tab-view';
-import Animated from 'react-native-reanimated';
+import { FeedContent } from '~/components/FeedItem'; // Keep FeedContent if processedFeedItems uses it
+import VideoFeedItem, { VideoPlayerData } from '~/components/VideoFeedItem'; // Import the new component and VideoPlayerData
 import sampleFeedItems from '~/dummy/posts.json';
-import users from '~/dummy/users.json';
-import { StyledExpoImage } from "~/components/Image";
-import X from "~/assets/svg/aside/x.svg";
-import { BlurView } from 'expo-blur';
-import { AntDesign } from '@expo/vector-icons';
+import users from '~/dummy/users.json'; // Keep if used for author details not in posts.json directly
+
+// Map raw post data to VideoPlayerData structure for consistency
+const processedFeedItems: VideoPlayerData[] = sampleFeedItems
+    .map((item: any): VideoPlayerData | null => {
+        // Logic to handle different post structures and map to VideoPlayerData
+        let authorName = 'Unknown Author';
+        let authorHandle = 'unknownhandle';
+        let authorImageUrl = ''; // Add a default or placeholder image URL
+
+        if (typeof item.poster_id === 'string') {
+            const user = users.find(u => u.id === item.poster_id);
+            if (user) {
+                authorName = user.name;
+                authorHandle = user.handle;
+                authorImageUrl = user.profile_picture;
+            }
+        } else if (typeof item.authorName === 'string') {
+            authorName = item.authorName;
+            authorHandle = item.authorHandle || authorHandle;
+            authorImageUrl = item.authorImageUrl || authorImageUrl;
+        }
+
+        // Ensure media_url and contentId exist, and media_type is 'video'
+        if (item.media_type === 'video' && (item.media_url || item.mediaUrl) && item.contentId) {
+            return {
+                id: item.contentId, // Use contentId for VideoPlayerData id
+                videoSource: item.media_url || item.mediaUrl,
+                posterSource: item.thumbnail_url || undefined,
+                authorName: authorName,
+                authorHandle: authorHandle,
+                // authorImageUrl: authorImageUrl, // authorImageUrl is not part of VideoPlayerData, add if needed
+                caption: item.message || 'No caption',
+            };
+        }
+        return null; // Filter out non-video items or items missing crucial data
+    })
+    .filter((item): item is VideoPlayerData => item !== null); // Type guard to ensure all items are VideoPlayerData
 
 
-const APP_PRIMARY_COLOR = '#1DA1F2';
-
-
-const categoryTabs = ['For you', 'Following', 'Premier League', 'Design', 'React & Expo', 'Al'];
-
-
+// This might need adjustment based on the actual structure of your posts.json after updates.
+/*
 const processedFeedItems: FeedContent[] = sampleFeedItems.map((item: any): FeedContent => {
-
-    if (typeof item.poster_id === 'string') {
+    // Existing logic to handle different post structures
+    if (typeof item.poster_id === 'string') { // Original structure
+        const user = users.find(u => u.id === item.poster_id);
         return {
-            contentId: item.contentId || `post-${item.poster_id}-${Date.now()}`,
+            contentId: item.contentId || `post-${item.poster_id}-${item.posted_time || Date.now()}`,
             poster_id: item.poster_id,
+            authorName: user?.name || 'Unknown Author',
+            authorHandle: user?.handle || 'unknownhandle',
+            authorImageUrl: user?.profile_picture || '',
             posted_time: typeof item.posted_time === 'string' ? parseInt(item.posted_time, 10) :
                 typeof item.posted_time === 'number' ? item.posted_time : Date.now(),
             message: item.message || '',
-            media_url: item.media_url || undefined,
+            media_url: item.media_url || item.mediaUrl || undefined, // Consolidate media_url and mediaUrl
+            thumbnail_url: item.thumbnail_url || undefined,
             like_count: item.like_count || 0,
             retweet_count: item.retweet_count || 0,
             reply_count: item.reply_count || 0,
             view_count: item.view_count || '0',
-            category: item.category || 'For you'
+            category: item.category || 'For you',
+            media_type: item.media_type || (item.media_url || item.mediaUrl ? 'video' : 'text') // Infer media_type
         };
-    }
-
-    else if (typeof item.authorName === 'string') {
-
+    } else if (typeof item.authorName === 'string') { // Newer structure from initial posts
         const matchingUser = users.find(user => user.name === item.authorName);
-        const userId = matchingUser ? matchingUser.id : '0';
-
         return {
-            contentId: item.contentId || `post-legacy-${Date.now()}`,
-            poster_id: userId,
+            contentId: item.contentId || `post-legacy-${item.authorHandle}-${item.postedTime || Date.now()}`,
+            poster_id: matchingUser?.id || '0',
             authorName: item.authorName,
-            authorHandle: item.authorHandle,
-            authorImageUrl: item.authorImageUrl,
+            authorHandle: item.authorHandle || (matchingUser?.handle || 'unknownhandle'),
+            authorImageUrl: item.authorImageUrl || (matchingUser?.profile_picture || ''),
             posted_time: typeof item.postedTime === 'string' ? parseInt(item.postedTime, 10) :
                 typeof item.postedTime === 'number' ? item.postedTime : Date.now(),
             message: item.message || '',
-            media_url: item.mediaUrl || undefined,
+            media_url: item.mediaUrl || item.media_url || undefined,
+            thumbnail_url: item.thumbnail_url || undefined,
             like_count: item.likeCount || 0,
             retweet_count: item.retweetCount || 0,
             reply_count: item.replyCount || 0,
             view_count: item.viewCount || '0',
-            category: item.category || 'For you'
+            category: item.category || 'For you',
+            media_type: item.media_type || (item.mediaUrl || item.media_url ? 'video' : 'text')
         };
     }
+    // Fallback for unknown structure
+    return {
+        contentId: `post-unknown-${Date.now()}`,
+        poster_id: '0',
+        authorName: 'Unknown Author',
+        authorHandle: 'unknownhandle',
+        authorImageUrl: '',
+        posted_time: Date.now(),
+        message: 'Unknown post format',
+        media_url: undefined,
+        thumbnail_url: undefined,
+        like_count: 0,
+        retweet_count: 0,
+        reply_count: 0,
+        view_count: '0',
+        category: 'For you',
+        media_type: 'text'
+    };
+}).filter(item => item.media_type === 'video' && item.media_url); // Filter for video posts with a media_url
+*/
 
-    else {
-        return {
-            contentId: `post-unknown-${Date.now()}`,
-            poster_id: '0',
-            posted_time: Date.now(),
-            message: 'Unknown post format',
-            media_url: undefined,
-            like_count: 0,
-            retweet_count: 0,
-            reply_count: 0,
-            view_count: '0',
-            category: 'For you'
-        };
-    }
-});
-
-
-const Header = () => {
-    const currentUser = users[0];
-    const insets = useSafeAreaInsets();
-
-    return (
-        <View style={{ paddingTop: insets.top }} className="bg-white w-full">
-            <View className="flex-row items-center w-full justify-center py-3">
-                <StyledExpoImage source={{ uri: currentUser.profile_picture }} className="w-10 h-10 rounded-full absolute left-4" />
-                <X width={26} height={26} fill="black" />
-            </View>
-        </View>
-    );
-};
-
-
-const AddPostButton = () => {
-    const insets = useSafeAreaInsets();
-    return (
-        <TouchableOpacity className="absolute bottom-6 right-6 bg-blue-500 rounded-full 
-        w-14 h-14 shadow-lg flex items-center justify-center z-10"
-            style={{
-                bottom: insets.bottom * 3,
-            }}
-        >
-            <AntDesign name="plus" size={24} color="#ffffff" />
-        </TouchableOpacity>
-    );
-};
-
-
+const { height: windowHeight } = Dimensions.get('window');
 
 export default function HomeScreen() {
-    const router = useRouter();
-    const insets = useSafeAreaInsets();
+    const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
 
-    const handleItemPress = (postId: string) => {
-        router.push(`/post/${postId}`);
+    const viewabilityConfig = {
+        itemVisiblePercentThreshold: 50, // Trigger when 50% of the item is visible
     };
 
-
-    const feedItemsByCategory = useMemo(() => {
-        const itemsByCategory: Record<string, FeedContent[]> = {};
-
-
-        categoryTabs.forEach(category => {
-            itemsByCategory[category] = [];
-        });
-
-
-        itemsByCategory['For you'] = [...processedFeedItems].sort((a, b) => {
-            const timeA = typeof a.posted_time === 'number' ? a.posted_time : parseInt(String(a.posted_time), 10);
-            const timeB = typeof b.posted_time === 'number' ? b.posted_time : parseInt(String(b.posted_time), 10);
-            return timeB - timeA;
-        });
-
-
-        processedFeedItems.forEach(item => {
-            if (item.category && item.category !== 'For you') {
-                if (itemsByCategory[item.category]) {
-                    itemsByCategory[item.category].push(item);
-                }
+    const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
+        if (viewableItems.length > 0) {
+            // Prioritize the first viewable item as the active one
+            const firstViewableItem = viewableItems[0];
+            if (firstViewableItem.isViewable && firstViewableItem.item) {
+                setActiveVideoId(firstViewableItem.item.id);
             }
-        });
-
-        return itemsByCategory;
+        }
     }, []);
 
+    // Use a ref for onViewableItemsChanged to prevent FlatList re-renders if the function identity changes
+    // This is often not strictly necessary with useCallback if dependencies are stable, but good practice for performance.
+    const onViewableItemsChangedRef = useRef(onViewableItemsChanged);
 
-    const renderTab = useCallback((tabName: string) => {
 
-        const tabPosts = feedItemsByCategory[tabName] || [];
-
-
-        if (tabPosts.length === 0) {
-            return (
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-                    <Text style={{ fontSize: 18, fontWeight: '600', color: '#555' }}>
-                        You are all caught up.
-                    </Text>
-                </View>
-            );
-        }
-
-        const renderFeedItem = ({ item }: { item: FeedContent }) => (
-            <FeedItem itemData={item} onPress={() => handleItemPress(item.contentId || '')} />
-        );
-
+    const renderVideoItem = ({ item }: { item: VideoPlayerData }) => {
         return (
-            <Tabs.FlatList
-                data={tabPosts}
-                renderItem={renderFeedItem}
-                keyExtractor={(item) => {
-
-                    return `${tabName}-${item.contentId || `post-${item.poster_id}-${item.posted_time}`}`;
-                }}
-                contentContainerStyle={{
-                    paddingBottom: insets.bottom,
-                }}
-            />
+            <View style={styles.itemContainer}>
+                <VideoFeedItem
+                    initialVideoData={item}
+                    isActive={item.id === activeVideoId}
+                />
+            </View>
         );
-    }, [insets.bottom, feedItemsByCategory]);
+    };
 
-
-    const renderTabBar = (props: any) => (
-        <MaterialTabBar
-            {...props}
-            indicatorStyle={{ backgroundColor: APP_PRIMARY_COLOR, height: 3, borderRadius: 50 }}
-            activeColor="black"
-            scrollEnabled={true}
-            style={{
-                paddingHorizontal: 16,
-                textAlign: 'center',
-                elevation: 0, shadowOpacity: 0, borderBottomWidth: 0,
-                backgroundColor: 'white',
-            }}
-
-            labelStyle={{
-                marginHorizontal: 10,
-                opacity: 1,
-                fontWeight: 'bold', textTransform: 'capitalize', textAlign: 'center', height: 24,
-                fontSize: 15,
-                color: '#606E79'
-            }}
-
-        />
-    );
+    if (processedFeedItems.length === 0) {
+        return (
+            <View style={styles.emptyFeedContainer}>
+                <Text style={styles.emptyFeedText}>No videos available at the moment.</Text>
+                <Text style={styles.emptyFeedSubText}>Please check back later or ensure 'dummy/posts.json' has video entries.</Text>
+            </View>
+        );
+    }
 
     return (
-        <BlurView style={styles.container} className="flex-1" intensity={80} tint={"light"}>
-
-            <AddPostButton />
-            <Tabs.Container
-
-                renderHeader={Header}
-                renderTabBar={renderTabBar}
-                pagerProps={{ scrollEnabled: true }}
-                initialTabName="For you"
-                minHeaderHeight={-60}
-                revealHeaderOnScroll
-
-                headerContainerStyle={{
-                    backgroundColor: 'transparent',
-                    elevation: 0,
-                    shadowOpacity: 0,
-                }}
-            >
-                {categoryTabs.map((tab) => (
-                    <Tabs.Tab name={tab} key={tab}>
-                        {renderTab(tab)}
-                    </Tabs.Tab>
-                ))}
-            </Tabs.Container>
-        </BlurView>
+        <View style={styles.container}>
+            <FlatList
+                data={processedFeedItems}
+                renderItem={renderVideoItem}
+                keyExtractor={(item) => item.id} // Use the new id field from VideoPlayerData
+                pagingEnabled
+                showsVerticalScrollIndicator={false}
+                getItemLayout={(_data, index) => (
+                    { length: windowHeight * 0.9, offset: (windowHeight * 0.9) * index, index }
+                )}
+                onViewableItemsChanged={onViewableItemsChangedRef.current}
+                viewabilityConfig={viewabilityConfig}
+                // Adding a small delay before firing onViewableItemsChanged can sometimes help
+                // viewabilityConfigCallbackPairs={[{ viewabilityConfig, onViewableItemsChanged }]} // Alternative way
+            />
+        </View>
     );
 }
-
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: 'white',
+        backgroundColor: '#000',
+    },
+    itemContainer: {
+        height: windowHeight * 0.9,
         width: '100%',
-        height: '100%',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    emptyFeedContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#000',
+        padding: 20,
+    },
+    emptyFeedText: {
+        color: '#FFF',
+        fontSize: 18,
+        textAlign: 'center',
+        marginBottom: 10,
+    },
+    emptyFeedSubText: {
+        color: '#AAA',
+        fontSize: 14,
+        textAlign: 'center',
     },
 });
